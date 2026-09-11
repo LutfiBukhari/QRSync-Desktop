@@ -48,8 +48,7 @@ pub struct LogEntry {
 }
 
 /// Core QR & Text validation logic according to business rules
-#[tauri::command]
-pub fn validate_qr_content(raw_input: &str) -> ValidationResult {
+pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
     let mut issues = Vec::new();
     let mut invalid_chars = Vec::new();
 
@@ -138,13 +137,12 @@ pub fn validate_qr_content(raw_input: &str) -> ValidationResult {
 }
 
 /// Compare Manual User Input vs QR Scan Input
-#[tauri::command]
-pub fn compare_values(manual: &str, scanned: &str) -> MatchResult {
+pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
     let manual_val = manual.to_string();
     let scanned_val = scanned.to_string();
 
-    let manual_validation = validate_qr_content(manual);
-    let scanned_validation = validate_qr_content(scanned);
+    let manual_validation = validate_qr_content_impl(manual);
+    let scanned_validation = validate_qr_content_impl(scanned);
 
     // If scanned validation fails formatting
     if !scanned_validation.is_ok {
@@ -184,15 +182,14 @@ pub fn compare_values(manual: &str, scanned: &str) -> MatchResult {
 }
 
 /// Parse and validate multi-line bulk file content (.txt)
-#[tauri::command]
-pub fn parse_bulk_file(file_content: &str) -> Vec<LineValidation> {
+pub fn parse_bulk_file_impl(file_content: &str) -> Vec<LineValidation> {
     let lines: Vec<&str> = file_content.split('\n').collect();
     let mut result = Vec::new();
 
     for (idx, line) in lines.iter().enumerate() {
         let line_num = idx + 1;
         let raw = line.to_string();
-        let validation = validate_qr_content(&raw);
+        let validation = validate_qr_content_impl(&raw);
         let match_status = if validation.is_ok { "OK".to_string() } else { "NG".to_string() };
         let failure_reason = if validation.is_ok {
             "None".to_string()
@@ -219,10 +216,9 @@ fn get_log_file_path() -> PathBuf {
 }
 
 /// Write a log entry to persistent JSON file
-#[tauri::command]
-pub fn write_log_entry(entry: LogEntry) -> Result<(), String> {
+pub fn write_log_entry_impl(entry: LogEntry) -> Result<(), String> {
     let path = get_log_file_path();
-    let mut history = get_log_history().unwrap_or_default();
+    let mut history = get_log_history_impl().unwrap_or_default();
     history.insert(0, entry); // prepend newest logs
 
     // Keep last 1000 logs
@@ -237,8 +233,7 @@ pub fn write_log_entry(entry: LogEntry) -> Result<(), String> {
 }
 
 /// Retrieve all historical audit log entries
-#[tauri::command]
-pub fn get_log_history() -> Result<Vec<LogEntry>, String> {
+pub fn get_log_history_impl() -> Result<Vec<LogEntry>, String> {
     let path = get_log_file_path();
     if !path.exists() {
         return Ok(Vec::new());
@@ -257,8 +252,7 @@ pub fn get_log_history() -> Result<Vec<LogEntry>, String> {
 }
 
 /// Clear all audit log records
-#[tauri::command]
-pub fn clear_log_history() -> Result<(), String> {
+pub fn clear_log_history_impl() -> Result<(), String> {
     let path = get_log_file_path();
     if path.exists() {
         let _ = std::fs::remove_file(path);
@@ -266,17 +260,51 @@ pub fn clear_log_history() -> Result<(), String> {
     Ok(())
 }
 
+mod commands {
+    use super::*;
+
+    #[tauri::command]
+    pub fn validate_qr_content(raw_input: &str) -> ValidationResult {
+        validate_qr_content_impl(raw_input)
+    }
+
+    #[tauri::command]
+    pub fn compare_values(manual: &str, scanned: &str) -> MatchResult {
+        compare_values_impl(manual, scanned)
+    }
+
+    #[tauri::command]
+    pub fn parse_bulk_file(file_content: &str) -> Vec<LineValidation> {
+        parse_bulk_file_impl(file_content)
+    }
+
+    #[tauri::command]
+    pub fn write_log_entry(entry: LogEntry) -> Result<(), String> {
+        write_log_entry_impl(entry)
+    }
+
+    #[tauri::command]
+    pub fn get_log_history() -> Result<Vec<LogEntry>, String> {
+        get_log_history_impl()
+    }
+
+    #[tauri::command]
+    pub fn clear_log_history() -> Result<(), String> {
+        clear_log_history_impl()
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
-            validate_qr_content,
-            compare_values,
-            parse_bulk_file,
-            write_log_entry,
-            get_log_history,
-            clear_log_history
+            commands::validate_qr_content,
+            commands::compare_values,
+            commands::parse_bulk_file,
+            commands::write_log_entry,
+            commands::get_log_history,
+            commands::clear_log_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -284,11 +312,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_qr_content, compare_values};
+    use super::*;
 
     #[test]
     fn test_valid_qr() {
-        let res = validate_qr_content("GH69-46615A");
+        let res = validate_qr_content_impl("GH69-46615A");
         assert!(res.is_ok);
         assert_eq!(res.status_code, "OK");
         assert_eq!(res.enter_count, 0);
@@ -299,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_enter_1x() {
-        let res = validate_qr_content("GH69-46615A\n");
+        let res = validate_qr_content_impl("GH69-46615A\n");
         assert!(!res.is_ok);
         assert_eq!(res.enter_count, 1);
         assert!(res.detailed_reason.contains("NG: Detected 1x Enter"));
@@ -307,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_enter_2x() {
-        let res = validate_qr_content("GH69-46615A\n\n");
+        let res = validate_qr_content_impl("GH69-46615A\n\n");
         assert!(!res.is_ok);
         assert_eq!(res.enter_count, 2);
         assert!(res.detailed_reason.contains("NG: Detected 2x Enter"));
@@ -315,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_leading_space() {
-        let res = validate_qr_content(" GH69-46615A");
+        let res = validate_qr_content_impl(" GH69-46615A");
         assert!(!res.is_ok);
         assert!(res.has_leading_space);
         assert!(res.detailed_reason.contains("NG: Leading Space Detected"));
@@ -323,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_trailing_space() {
-        let res = validate_qr_content("GH69-46615A ");
+        let res = validate_qr_content_impl("GH69-46615A ");
         assert!(!res.is_ok);
         assert!(res.has_trailing_space);
         assert!(res.detailed_reason.contains("NG: Trailing Space Detected"));
@@ -331,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_character_mismatch() {
-        let res = validate_qr_content("GH69-46615A#");
+        let res = validate_qr_content_impl("GH69-46615A#");
         assert!(!res.is_ok);
         assert_eq!(res.invalid_chars, vec!['#']);
         assert!(res.detailed_reason.contains("NG: Character Mismatch"));
@@ -339,14 +367,14 @@ mod tests {
 
     #[test]
     fn test_compare_values_pass() {
-        let match_res = compare_values("GH69-46615A", "GH69-46615A");
+        let match_res = compare_values_impl("GH69-46615A", "GH69-46615A");
         assert!(match_res.is_ok);
         assert_eq!(match_res.status_code, "OK");
     }
 
     #[test]
     fn test_compare_values_mismatch() {
-        let match_res = compare_values("GH69-46615A", "GH69-99999A");
+        let match_res = compare_values_impl("GH69-46615A", "GH69-99999A");
         assert!(!match_res.is_ok);
         assert_eq!(match_res.detailed_reason, "NG: Value Mismatch");
     }
