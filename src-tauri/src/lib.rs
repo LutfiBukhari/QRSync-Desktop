@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::fs::{OpenOptions, File};
+use std::fs::File;
 use std::io::{Write, Read};
 use std::path::PathBuf;
 
@@ -284,7 +284,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{validate_qr_content, compare_values};
 
     #[test]
     fn test_valid_qr() {
