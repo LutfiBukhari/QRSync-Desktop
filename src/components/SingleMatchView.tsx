@@ -1,0 +1,413 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { MatchResult, ValidationResult } from '../types';
+import { apiCompareValues, apiWriteLogEntry } from '../services/tauriBridge';
+import { playSoundEffect } from '../services/audio';
+import { Scan, CheckCircle2, XCircle, AlertTriangle, CornerDownLeft, Sparkles, RefreshCw, Key, ShieldCheck } from 'lucide-react';
+
+interface SingleMatchViewProps {
+  onScanResult: (result: 'OK' | 'NG', manual: string, scanned: string, details: string) => void;
+  autoFocus: boolean;
+  soundEnabled: boolean;
+}
+
+export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
+  onScanResult,
+  autoFocus,
+  soundEnabled,
+}) => {
+  const [manualInput, setManualInput] = useState<string>('GH69-46615A');
+  const [scannedInput, setScannedInput] = useState<string>('');
+  const [lastMatchResult, setLastMatchResult] = useState<MatchResult | null>(null);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  const qrInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus QR scanner input
+  useEffect(() => {
+    if (autoFocus && qrInputRef.current) {
+      qrInputRef.current.focus();
+    }
+  }, [autoFocus, lastMatchResult]);
+
+  const handleVerify = async (manual: string, scanned: string) => {
+    if (!scanned && !manual) return;
+    setIsProcessing(true);
+
+    const result = await apiCompareValues(manual, scanned);
+    setLastMatchResult(result);
+
+    // Play feedback tone
+    playSoundEffect(result.is_ok ? 'OK' : 'NG', soundEnabled);
+
+    // Record log
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    await apiWriteLogEntry({
+      id: Math.random().toString(36).substring(2, 9),
+      timestamp,
+      manual_val: manual,
+      scanned_val: scanned,
+      result: result.is_ok ? 'OK' : 'NG',
+      error_details: result.detailed_reason,
+    });
+
+    onScanResult(
+      result.is_ok ? 'OK' : 'NG',
+      manual,
+      scanned,
+      result.detailed_reason
+    );
+
+    setIsProcessing(false);
+
+    // Re-focus scanner input after short delay for rapid scanning
+    if (autoFocus) {
+      setTimeout(() => {
+        if (qrInputRef.current) {
+          qrInputRef.current.focus();
+          qrInputRef.current.select();
+        }
+      }, 50);
+    }
+  };
+
+  const handleQrKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleVerify(manualInput, scannedInput);
+    }
+  };
+
+  const applyPreset = (scannedPreset: string) => {
+    setScannedInput(scannedPreset);
+    handleVerify(manualInput, scannedPreset);
+  };
+
+  // Helper to render visual character diagnostics
+  const renderVisualBreakdown = (val: ValidationResult) => {
+    const raw = val.raw_input;
+    if (!raw) return <span className="text-slate-500 italic">No input scanned</span>;
+
+    const elements: React.ReactNode[] = [];
+    let keyIdx = 0;
+
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (ch === ' ') {
+        elements.push(
+          <span key={keyIdx++} className="char-space-pill" title="Leading or Trailing Space">
+            ␠
+          </span>
+        );
+      } else if (ch === '\t') {
+        elements.push(
+          <span key={keyIdx++} className="char-space-pill" title="Tab Space">
+            \t
+          </span>
+        );
+      } else if (ch === '\n') {
+        elements.push(
+          <span key={keyIdx++} className="char-newline-pill" title="Line Break Enter">
+            ↵ Enter
+          </span>
+        );
+      } else if (ch === '\r') {
+        // skip \r if followed by \n
+        if (raw[i + 1] === '\n') continue;
+        elements.push(
+          <span key={keyIdx++} className="char-newline-pill" title="Carriage Return">
+            \r
+          </span>
+        );
+      } else if (!/[a-zA-Z0-9-]/.test(ch)) {
+        elements.push(
+          <span key={keyIdx++} className="char-invalid-pill" title={`Disallowed character: '${ch}'`}>
+            {ch}
+          </span>
+        );
+      } else {
+        elements.push(
+          <span key={keyIdx++} className="text-emerald-300 font-bold">
+            {ch}
+          </span>
+        );
+      }
+    }
+
+    return <div className="flex flex-wrap items-center gap-1 font-mono text-base">{elements}</div>;
+  };
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Top Banner Status Display */}
+      {lastMatchResult ? (
+        <div
+          className={`p-6 rounded-2xl border transition-all duration-300 shadow-2xl ${
+            lastMatchResult.is_ok
+              ? 'bg-gradient-to-r from-emerald-950/80 via-slate-900 to-teal-950/80 border-emerald-500/50 shadow-emerald-500/10'
+              : 'bg-gradient-to-r from-rose-950/80 via-slate-900 to-red-950/80 border-rose-500/50 shadow-rose-500/10 animate-shake'
+          }`}
+        >
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-5">
+              <div
+                className={`p-4 rounded-2xl ${
+                  lastMatchResult.is_ok
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                }`}
+              >
+                {lastMatchResult.is_ok ? (
+                  <CheckCircle2 className="w-12 h-12 stroke-[2.5]" />
+                ) : (
+                  <XCircle className="w-12 h-12 stroke-[2.5]" />
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`text-3xl font-black tracking-tight ${
+                      lastMatchResult.is_ok ? 'text-emerald-400' : 'text-rose-400'
+                    }`}
+                  >
+                    {lastMatchResult.is_ok ? 'OK / PASS' : 'NG / FAIL'}
+                  </span>
+                  <span
+                    className={`px-3 py-1 text-xs font-mono font-bold rounded-lg uppercase border ${
+                      lastMatchResult.is_ok
+                        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                        : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                    }`}
+                  >
+                    {lastMatchResult.detailed_reason}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-300 mt-1">
+                  Manual Value: <span className="font-mono text-white font-semibold">{lastMatchResult.manual_val}</span> | Scanned QR: <span className="font-mono text-white font-semibold">{lastMatchResult.scanned_val || '(Empty)'}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Diagnostic Pills */}
+            <div className="flex flex-col items-end gap-2 text-xs font-mono">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">FORMAT:</span>
+                <span
+                  className={
+                    lastMatchResult.scanned_validation.is_ok ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'
+                  }
+                >
+                  {lastMatchResult.scanned_validation.status_code}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">VALUE MATCH:</span>
+                <span
+                  className={
+                    lastMatchResult.manual_val.trim() === lastMatchResult.scanned_val.trim()
+                      ? 'text-emerald-400 font-bold'
+                      : 'text-rose-400 font-bold'
+                  }
+                >
+                  {lastMatchResult.manual_val.trim() === lastMatchResult.scanned_val.trim() ? 'PASS' : 'MISMATCH'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="p-6 rounded-2xl glass-panel border border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-slate-800 text-slate-400">
+              <Scan className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-200">Ready for Hardware QR Scanning</h3>
+              <p className="text-xs text-slate-400">
+                Type or paste target Manual Value, then scan hardware QR barcode into field below.
+              </p>
+            </div>
+          </div>
+          <span className="px-3 py-1 text-xs font-mono bg-slate-800 text-slate-400 rounded-lg">
+            Awaiting Input...
+          </span>
+        </div>
+      )}
+
+      {/* Main Dual Input Panel */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Panel 1: Manual User Input */}
+        <div className="glass-panel p-6 rounded-2xl space-y-4 border border-slate-800">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Key className="w-5 h-5 text-emerald-400" />
+              <h2 className="font-bold text-slate-100 text-lg">1. Manual User Input</h2>
+            </div>
+            <span className="text-xs font-mono text-slate-400">Expected Master Target</span>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-slate-400">Target Value Specification</label>
+            <input
+              type="text"
+              value={manualInput}
+              onChange={(e) => setManualInput(e.target.value)}
+              placeholder="e.g. GH69-46615A"
+              className="w-full px-4 py-3 bg-slate-900/90 border border-slate-700/80 rounded-xl text-white font-mono text-base focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all shadow-inner"
+            />
+          </div>
+
+          {/* Target Preset Chips */}
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+              Quick Target Presets
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {['GH69-46615A', 'SN99-10294B', 'B882-77192C'].map((val) => (
+                <button
+                  key={val}
+                  onClick={() => setManualInput(val)}
+                  className="px-2.5 py-1 text-xs font-mono bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-all"
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Panel 2: QR Scanner Input */}
+        <div className="glass-panel p-6 rounded-2xl space-y-4 border border-slate-800 relative">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Scan className="w-5 h-5 text-cyan-400 animate-pulse" />
+              <h2 className="font-bold text-slate-100 text-lg">2. Hardware QR Scanner Input</h2>
+            </div>
+            <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/20">
+              Auto-Focused
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-slate-400">Scanned QR Code Raw String</label>
+            <div className="relative">
+              <input
+                ref={qrInputRef}
+                type="text"
+                value={scannedInput}
+                onChange={(e) => setScannedInput(e.target.value)}
+                onKeyDown={handleQrKeyDown}
+                placeholder="Scan QR barcode here (Press Enter)..."
+                className="w-full px-4 py-3 pl-10 bg-slate-900/90 border border-slate-700/80 rounded-xl text-white font-mono text-base focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all shadow-inner"
+              />
+              <Scan className="w-5 h-5 text-slate-500 absolute left-3 top-3.5" />
+            </div>
+          </div>
+
+          <button
+            onClick={() => handleVerify(manualInput, scannedInput)}
+            disabled={isProcessing}
+            className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/25 transition-all flex items-center justify-center gap-2 active:scale-[0.99]"
+          >
+            {isProcessing ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <ShieldCheck className="w-5 h-5" />
+                Verify Value Match
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Simulation Test Scenarios (Referencing User Requirement Scenarios) */}
+      <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-yellow-400" />
+            <h3 className="font-bold text-slate-200">Simulation Scenarios & Test Suite</h3>
+          </div>
+          <span className="text-xs text-slate-400">Click preset to test specific validation condition</span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <button
+            onClick={() => applyPreset('GH69-46615A')}
+            className="p-3 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 rounded-xl text-left transition-all group"
+          >
+            <span className="text-xs font-bold text-emerald-400 block group-hover:text-emerald-300">
+              1. Normal OK
+            </span>
+            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A"</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset('GH69-46615A\n')}
+            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+          >
+            <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
+              2. Enter 1x
+            </span>
+            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A\n"</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset('GH69-46615A\n\n')}
+            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+          >
+            <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
+              3. Enter 2x
+            </span>
+            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A\n\n"</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset(' GH69-46615A')}
+            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+          >
+            <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
+              4. Leading Space
+            </span>
+            <span className="text-[11px] font-mono text-slate-400 block truncate">" GH69-46615A"</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset('GH69-46615A ')}
+            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+          >
+            <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
+              5. Trailing Space
+            </span>
+            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A "</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset('GH69-46615A#')}
+            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+          >
+            <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
+              6. Other Symbols
+            </span>
+            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A#"</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Visual Diagnostic Character Renderer Panel */}
+      {lastMatchResult && (
+        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+          <h3 className="font-bold text-slate-200 text-sm uppercase tracking-wider flex items-center gap-2">
+            <CornerDownLeft className="w-4 h-4 text-cyan-400" />
+            Visual Anomaly Character Renderer
+          </h3>
+
+          <div className="p-4 bg-slate-950/90 rounded-xl border border-slate-800">
+            <span className="text-xs text-slate-500 block mb-2">Scanned String Character Stream:</span>
+            {renderVisualBreakdown(lastMatchResult.scanned_validation)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

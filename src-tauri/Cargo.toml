@@ -1,0 +1,23 @@
+[package]
+name = "matchvalue-engine"
+version = "1.0.0"
+description = "MatchValue Engine - Real-time QR Scanner & Manual Input Verification"
+authors = ["MatchValue Team"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-dialog = "2.0.0"
+tauri-plugin-fs = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.10"
+libdbus-sys = { version = "0.2", features = ["vendored"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

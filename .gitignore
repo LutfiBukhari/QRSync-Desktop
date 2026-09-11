@@ -1,0 +1,29 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Vite build output
+dist/
+dist-ssr/
+*.local
+
+# Rust & Tauri build outputs
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local audit logs & temporary files
+*.log
+matchvalue_audit_logs.json
