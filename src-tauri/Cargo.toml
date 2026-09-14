@@ -1,6 +1,6 @@
 [package]
 name = "matchvalue-engine"
-version = "1.0.0"
+version = "1.0.2"
 description = "MatchValue Engine - Real-time QR Scanner & Manual Input Verification"
 authors = ["MatchValue Team"]
 edition = "2021"

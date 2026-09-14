@@ -8,13 +8,20 @@ const isTauriAvailable = (): boolean => {
 
 /**
  * Frontend Fallback validator replicating exact Rust backend rules
+ * Inspects exact ASCII 10 (\n) and ASCII 13 (\r) without silent trimming
  */
 export const clientValidateQR = (rawInput: string): ValidationResult => {
   const issues: string[] = [];
   const invalidCharsSet = new Set<string>();
 
-  const n_count = (rawInput.match(/\n/g) || []).length;
-  const r_count = (rawInput.match(/\r/g) || []).length;
+  let n_count = 0;
+  let r_count = 0;
+  for (let i = 0; i < rawInput.length; i++) {
+    const code = rawInput.charCodeAt(i);
+    if (code === 10) n_count++;
+    if (code === 13) r_count++;
+  }
+
   const total_line_breaks = n_count > 0 ? n_count : r_count;
 
   const has_double_enter =
@@ -42,7 +49,8 @@ export const clientValidateQR = (rawInput: string): ValidationResult => {
     issues.push('NG: Trailing Space Detected');
   }
 
-  for (const ch of rawInput) {
+  for (let i = 0; i < rawInput.length; i++) {
+    const ch = rawInput[i];
     if (ch === '\r' || ch === '\n') continue;
     if (!/[a-zA-Z0-9-]/.test(ch)) {
       invalidCharsSet.add(ch);
@@ -80,6 +88,7 @@ export const clientCompareValues = (manual: string, scanned: string): MatchResul
   const manualValidation = clientValidateQR(manual);
   const scannedValidation = clientValidateQR(scanned);
 
+  // Formatting errors take absolute precedence
   if (!scannedValidation.is_ok) {
     return {
       is_ok: false,

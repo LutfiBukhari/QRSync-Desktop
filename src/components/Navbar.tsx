@@ -39,7 +39,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 MatchValue <span className="text-emerald-400 font-black">ENGINE</span>
               </h1>
               <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full">
-                v2.0 Desktop
+                v1.0.2 Desktop
               </span>
             </div>
             <p className="text-xs text-slate-400 font-medium">

@@ -47,14 +47,14 @@ pub struct LogEntry {
     pub error_details: String,
 }
 
-/// Core QR & Text validation logic according to business rules
+/// Core QR & Text validation logic inspecting exact ASCII bytes without silent trimming
 pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
     let mut issues = Vec::new();
     let mut invalid_chars = Vec::new();
 
-    // Count line breaks (\n, \r\n, \r)
-    let n_count = raw_input.matches('\n').count();
-    let r_count = raw_input.matches('\r').count();
+    // Inspect ASCII 10 (\n) and ASCII 13 (\r)
+    let n_count = raw_input.as_bytes().iter().filter(|&&b| b == 10).count();
+    let r_count = raw_input.as_bytes().iter().filter(|&&b| b == 13).count();
     
     // Total line break occurrences
     let total_line_breaks = if n_count > 0 {
@@ -77,31 +77,32 @@ pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
         0
     };
 
+    // Formatting check 1: Enters take priority
     if enter_count >= 2 {
         issues.push("NG: Detected 2x Enter".to_string());
     } else if enter_count == 1 {
         issues.push("NG: Detected 1x Enter".to_string());
     }
 
-    // Strip trailing line breaks for whitespace analysis
+    // Strip line breaks only for inspecting leading/trailing spaces
     let without_newlines = raw_input.trim_matches(|c| c == '\r' || c == '\n');
 
-    // Check Leading Space
+    // Formatting check 2: Leading Space
     let has_leading_space = without_newlines.starts_with(' ') || without_newlines.starts_with('\t');
     if has_leading_space {
         issues.push("NG: Leading Space Detected".to_string());
     }
 
-    // Check Trailing Space
+    // Formatting check 3: Trailing Space
     let has_trailing_space = without_newlines.ends_with(' ') || without_newlines.ends_with('\t');
     if has_trailing_space {
         issues.push("NG: Trailing Space Detected".to_string());
     }
 
-    // Check allowed character set: A-Z, a-z, 0-9, and '-'
+    // Formatting check 4: Disallowed Characters (A-Z, a-z, 0-9, and '-')
     for ch in raw_input.chars() {
         if ch == '\r' || ch == '\n' {
-            continue; // handled by enter checks
+            continue; // line breaks handled above
         }
         if !ch.is_ascii_alphanumeric() && ch != '-' {
             if !invalid_chars.contains(&ch) {
@@ -146,6 +147,7 @@ pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
 }
 
 /// Compare Manual User Input vs QR Scan Input
+/// Formatting errors take absolute precedence over value matching.
 pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
     let manual_val = manual.to_string();
     let scanned_val = scanned.to_string();
@@ -153,7 +155,7 @@ pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
     let manual_validation = validate_qr_content_impl(manual);
     let scanned_validation = validate_qr_content_impl(scanned);
 
-    // If scanned validation fails formatting (Enter 1x, Enter 2x, Spaces, Disallowed Chars)
+    // FORMATTING ERRORS MUST TAKE ABSOLUTE PRECEDENCE
     if !scanned_validation.is_ok {
         return MatchResult {
             is_ok: false,
@@ -166,7 +168,7 @@ pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
         };
     }
 
-    // If values do not match
+    // Value match check
     if manual.trim() != scanned.trim() {
         return MatchResult {
             is_ok: false,

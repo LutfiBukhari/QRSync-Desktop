@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MatchResult, ValidationResult } from '../types';
 import { apiCompareValues, apiWriteLogEntry } from '../services/tauriBridge';
 import { playSoundEffect } from '../services/audio';
-import { Scan, CheckCircle2, XCircle, AlertTriangle, CornerDownLeft, Sparkles, RefreshCw, Key, ShieldCheck } from 'lucide-react';
+import { Scan, CheckCircle2, XCircle, CornerDownLeft, Sparkles, RefreshCw, Key, ShieldCheck, Terminal, Bug } from 'lucide-react';
 
 interface SingleMatchViewProps {
   onScanResult: (result: 'OK' | 'NG', manual: string, scanned: string, details: string) => void;
@@ -20,32 +20,35 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
   const [lastMatchResult, setLastMatchResult] = useState<MatchResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
+  // Raw keydown buffer tracking rapid hardware scanner input
+  const rawKeyBufferRef = useRef<string>('');
   const qrTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-focus QR scanner textarea
+  // Auto-focus QR scanner field
   useEffect(() => {
     if (autoFocus && qrTextareaRef.current) {
       qrTextareaRef.current.focus();
     }
   }, [autoFocus, lastMatchResult]);
 
-  const handleVerify = async (manual: string, scanned: string) => {
-    if (!scanned && !manual) return;
+  const handleVerify = async (manual: string, rawScanned: string) => {
+    if (!rawScanned && !manual) return;
     setIsProcessing(true);
 
-    const result = await apiCompareValues(manual, scanned);
+    // Strictly pass rawScanned WITHOUT calling .trim() before verification
+    const result = await apiCompareValues(manual, rawScanned);
     setLastMatchResult(result);
 
-    // Play audio tone feedback
+    // Play feedback audio
     playSoundEffect(result.is_ok ? 'OK' : 'NG', soundEnabled);
 
-    // Record persistent log entry
+    // Log entry
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     await apiWriteLogEntry({
       id: Math.random().toString(36).substring(2, 9),
       timestamp,
       manual_val: manual,
-      scanned_val: scanned,
+      scanned_val: rawScanned,
       result: result.is_ok ? 'OK' : 'NG',
       error_details: result.detailed_reason,
     });
@@ -53,13 +56,16 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     onScanResult(
       result.is_ok ? 'OK' : 'NG',
       manual,
-      scanned,
+      rawScanned,
       result.detailed_reason
     );
 
     setIsProcessing(false);
 
-    // Re-focus scanner field for continuous rapid scanning
+    // Clear raw buffer after verification
+    rawKeyBufferRef.current = '';
+
+    // Re-focus scanner box
     if (autoFocus) {
       setTimeout(() => {
         if (qrTextareaRef.current) {
@@ -71,27 +77,57 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
   };
 
   const handleQrKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // If Enter key is pressed by hardware scanner or user (without Shift)
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleVerify(manualInput, scannedInput);
+    // If hardware scanner or user hits Enter (keyCode 13 or Key: 'Enter')
+    if (e.key === 'Enter' || e.keyCode === 13) {
+      if (!e.shiftKey) {
+        e.preventDefault();
+
+        // Determine effective raw string to test
+        let effectiveRaw = scannedInput;
+
+        // If rawKeyBufferRef accumulated data during scan, prefer or combine it
+        if (rawKeyBufferRef.current && rawKeyBufferRef.current.length > effectiveRaw.length) {
+          effectiveRaw = rawKeyBufferRef.current;
+        }
+
+        // If the scanner typed/appended an Enter before submitting, ensure \n is captured in raw string
+        if (effectiveRaw && !effectiveRaw.endsWith('\n') && !effectiveRaw.endsWith('\r')) {
+          // Check if hardware scanner sent explicit newline or if enter event is part of sequence
+          // If scanner sent 1x Enter or 2x Enter preset, verify raw input
+        }
+
+        handleVerify(manualInput, effectiveRaw);
+      }
+    } else if (e.key.length === 1) {
+      // Accumulate raw key character into buffer
+      rawKeyBufferRef.current += e.key;
     }
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pastedText = e.clipboardData.getData('text');
     if (pastedText) {
-      // Retain exact unsanitized pasted text with all newlines and spaces
+      // Retain exact unsanitized pasted text with all newlines and spaces intact
       setScannedInput(pastedText);
+      rawKeyBufferRef.current = pastedText;
+    }
+  };
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setScannedInput(val);
+    if (!val) {
+      rawKeyBufferRef.current = '';
     }
   };
 
   const applyPreset = (scannedPreset: string) => {
     setScannedInput(scannedPreset);
+    rawKeyBufferRef.current = scannedPreset;
     handleVerify(manualInput, scannedPreset);
   };
 
-  // Visual character anomaly renderer
+  // Visual Character Anomaly Renderer & Debugger
   const renderVisualBreakdown = (val: ValidationResult) => {
     const raw = val.raw_input;
     if (!raw) return <span className="text-slate-500 italic font-sans text-xs">No input scanned</span>;
@@ -101,34 +137,36 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
 
     for (let i = 0; i < raw.length; i++) {
       const ch = raw[i];
+      const code = raw.charCodeAt(i);
+
       if (ch === ' ') {
         elements.push(
-          <span key={keyIdx++} className="char-space-pill px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title="Space character">
+          <span key={keyIdx++} className="px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title={`Space (ASCII ${code})`}>
             ␠ space
           </span>
         );
       } else if (ch === '\t') {
         elements.push(
-          <span key={keyIdx++} className="char-space-pill px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title="Tab character">
+          <span key={keyIdx++} className="px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title={`Tab (ASCII ${code})`}>
             \t tab
           </span>
         );
       } else if (ch === '\n') {
         elements.push(
-          <span key={keyIdx++} className="char-newline-pill px-2 py-0.5 rounded bg-rose-500/25 border border-rose-500/70 text-rose-300 text-xs font-mono font-bold animate-pulse" title="Line Break Enter">
-            ↵ Enter (\n)
+          <span key={keyIdx++} className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-500/80 text-rose-200 text-xs font-mono font-black animate-pulse" title={`Line Feed (ASCII ${code})`}>
+            [↵ \n]
           </span>
         );
       } else if (ch === '\r') {
-        if (raw[i + 1] === '\n') continue; // render \r\n together as single Enter pill
+        if (raw[i + 1] === '\n') continue; // render \r\n combined
         elements.push(
-          <span key={keyIdx++} className="char-newline-pill px-2 py-0.5 rounded bg-rose-500/25 border border-rose-500/70 text-rose-300 text-xs font-mono font-bold animate-pulse" title="Carriage Return">
-            \r Enter
+          <span key={keyIdx++} className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-500/80 text-rose-200 text-xs font-mono font-black animate-pulse" title={`Carriage Return (ASCII ${code})`}>
+            [↵ \r]
           </span>
         );
       } else if (!/[a-zA-Z0-9-]/.test(ch)) {
         elements.push(
-          <span key={keyIdx++} className="char-invalid-pill px-2 py-0.5 rounded bg-rose-600/35 border border-rose-400 text-rose-100 text-xs font-mono font-bold animate-pulse" title={`Disallowed Symbol: '${ch}'`}>
+          <span key={keyIdx++} className="px-2 py-0.5 rounded bg-rose-600/40 border border-rose-400 text-rose-100 text-xs font-mono font-bold animate-pulse" title={`Disallowed Symbol: '${ch}' (ASCII ${code})`}>
             {ch}
           </span>
         );
@@ -141,7 +179,33 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
       }
     }
 
-    return <div className="flex flex-wrap items-center gap-1.5 p-3 bg-slate-950 rounded-xl border border-slate-800">{elements}</div>;
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5 p-3 bg-slate-950 rounded-xl border border-slate-800">
+          {elements}
+        </div>
+
+        {/* ASCII Code Debug Stream */}
+        <div className="p-2.5 bg-slate-900/90 rounded-lg border border-slate-800/80 font-mono text-[11px] text-slate-400 flex flex-wrap gap-2 items-center">
+          <Bug className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="text-slate-500">ASCII Debug Stream ({raw.length} bytes):</span>
+          {Array.from(raw).map((c, idx) => (
+            <span
+              key={idx}
+              className={`px-1 rounded ${
+                c === '\n' || c === '\r'
+                  ? 'bg-rose-500/30 text-rose-300 font-bold border border-rose-500/50'
+                  : c === ' '
+                  ? 'bg-yellow-500/20 text-yellow-300'
+                  : 'bg-slate-800 text-slate-300'
+              }`}
+            >
+              [{c.charCodeAt(0)} '{c === '\n' ? '\\n' : c === '\r' ? '\\r' : c}']
+            </span>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -308,7 +372,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
                 ref={qrTextareaRef}
                 rows={2}
                 value={scannedInput}
-                onChange={(e) => setScannedInput(e.target.value)}
+                onChange={handleTextareaChange}
                 onKeyDown={handleQrKeyDown}
                 onPaste={handlePaste}
                 placeholder="Scan hardware QR barcode here (Press Enter to verify)..."
@@ -407,20 +471,20 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
         </div>
       </div>
 
-      {/* Visual Character Anomaly Renderer */}
+      {/* Visual Character Anomaly Renderer & ASCII Debugger Stream */}
       {lastMatchResult && (
         <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <h3 className="font-bold text-slate-200 text-sm uppercase tracking-wider flex items-center gap-2">
-            <CornerDownLeft className="w-4 h-4 text-cyan-400" />
-            Visual Character Stream Anomaly Renderer
-          </h3>
-
-          <div className="p-2">
-            <span className="text-xs text-slate-400 block mb-2 font-mono">
-              Scanned String Inspection:
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-200 text-sm uppercase tracking-wider flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-cyan-400" />
+              Visual Character & ASCII Byte Debugger Stream
+            </h3>
+            <span className="text-xs font-mono text-cyan-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+              Raw Bytes Inspection
             </span>
-            {renderVisualBreakdown(lastMatchResult.scanned_validation)}
           </div>
+
+          {renderVisualBreakdown(lastMatchResult.scanned_validation)}
         </div>
       )}
     </div>
