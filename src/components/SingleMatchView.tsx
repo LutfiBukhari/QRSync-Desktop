@@ -20,7 +20,6 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
   const [lastMatchResult, setLastMatchResult] = useState<MatchResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Raw keydown buffer tracking rapid hardware scanner input
   const rawKeyBufferRef = useRef<string>('');
   const qrTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -35,14 +34,14 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     if (!rawScanned && !manual) return;
     setIsProcessing(true);
 
-    // Strictly pass rawScanned WITHOUT calling .trim() before verification
+    // Pass unsanitized raw string to validator without calling .trim()
     const result = await apiCompareValues(manual, rawScanned);
     setLastMatchResult(result);
 
-    // Play feedback audio
+    // Play feedback tone
     playSoundEffect(result.is_ok ? 'OK' : 'NG', soundEnabled);
 
-    // Log entry
+    // Record log entry
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     await apiWriteLogEntry({
       id: Math.random().toString(36).substring(2, 9),
@@ -61,11 +60,8 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     );
 
     setIsProcessing(false);
-
-    // Clear raw buffer after verification
     rawKeyBufferRef.current = '';
 
-    // Re-focus scanner box
     if (autoFocus) {
       setTimeout(() => {
         if (qrTextareaRef.current) {
@@ -77,29 +73,16 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
   };
 
   const handleQrKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // If hardware scanner or user hits Enter (keyCode 13 or Key: 'Enter')
     if (e.key === 'Enter' || e.keyCode === 13) {
       if (!e.shiftKey) {
         e.preventDefault();
-
-        // Determine effective raw string to test
         let effectiveRaw = scannedInput;
-
-        // If rawKeyBufferRef accumulated data during scan, prefer or combine it
         if (rawKeyBufferRef.current && rawKeyBufferRef.current.length > effectiveRaw.length) {
           effectiveRaw = rawKeyBufferRef.current;
         }
-
-        // If the scanner typed/appended an Enter before submitting, ensure \n is captured in raw string
-        if (effectiveRaw && !effectiveRaw.endsWith('\n') && !effectiveRaw.endsWith('\r')) {
-          // Check if hardware scanner sent explicit newline or if enter event is part of sequence
-          // If scanner sent 1x Enter or 2x Enter preset, verify raw input
-        }
-
         handleVerify(manualInput, effectiveRaw);
       }
     } else if (e.key.length === 1) {
-      // Accumulate raw key character into buffer
       rawKeyBufferRef.current += e.key;
     }
   };
@@ -107,7 +90,6 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pastedText = e.clipboardData.getData('text');
     if (pastedText) {
-      // Retain exact unsanitized pasted text with all newlines and spaces intact
       setScannedInput(pastedText);
       rawKeyBufferRef.current = pastedText;
     }
@@ -127,7 +109,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     handleVerify(manualInput, scannedPreset);
   };
 
-  // Visual Character Anomaly Renderer & Debugger
+  // Visual Character Stream & ASCII Byte Debugger Stream
   const renderVisualBreakdown = (val: ValidationResult) => {
     const raw = val.raw_input;
     if (!raw) return <span className="text-slate-500 italic font-sans text-xs">No input scanned</span>;
@@ -135,11 +117,28 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     const elements: React.ReactNode[] = [];
     let keyIdx = 0;
 
+    // Check scanner 'j' / 'jj' control suffix
+    const hasDoubleJSuffix = raw.endsWith('jj') || raw.endsWith('JJ');
+    const hasSingleJSuffix = !hasDoubleJSuffix && (raw.endsWith('j') || raw.endsWith('J'));
+    const suffixLen = hasDoubleJSuffix ? 2 : hasSingleJSuffix ? 1 : 0;
+    const bodyLen = raw.length - suffixLen;
+
     for (let i = 0; i < raw.length; i++) {
       const ch = raw[i];
       const code = raw.charCodeAt(i);
 
-      if (ch === ' ') {
+      if (i >= bodyLen) {
+        // Hardware scanner control 'j' or 'jj' suffix
+        elements.push(
+          <span
+            key={keyIdx++}
+            className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-500/80 text-rose-200 text-xs font-mono font-black animate-pulse"
+            title={`Scanner Control Enter Sequence: '${ch}' (ASCII ${code})`}
+          >
+            {hasDoubleJSuffix ? '↵↵ Enter 2x (ctrl-j)' : '↵ Enter 1x (ctrl-j)'}
+          </span>
+        );
+      } else if (ch === ' ') {
         elements.push(
           <span key={keyIdx++} className="px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title={`Space (ASCII ${code})`}>
             ␠ space
@@ -158,7 +157,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </span>
         );
       } else if (ch === '\r') {
-        if (raw[i + 1] === '\n') continue; // render \r\n combined
+        if (raw[i + 1] === '\n') continue;
         elements.push(
           <span key={keyIdx++} className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-500/80 text-rose-200 text-xs font-mono font-black animate-pulse" title={`Carriage Return (ASCII ${code})`}>
             [↵ \r]
@@ -180,29 +179,49 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     }
 
     return (
-      <div className="space-y-2">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-1.5 p-3 bg-slate-950 rounded-xl border border-slate-800">
           {elements}
         </div>
 
-        {/* ASCII Code Debug Stream */}
-        <div className="p-2.5 bg-slate-900/90 rounded-lg border border-slate-800/80 font-mono text-[11px] text-slate-400 flex flex-wrap gap-2 items-center">
-          <Bug className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-slate-500">ASCII Debug Stream ({raw.length} bytes):</span>
-          {Array.from(raw).map((c, idx) => (
-            <span
-              key={idx}
-              className={`px-1 rounded ${
-                c === '\n' || c === '\r'
-                  ? 'bg-rose-500/30 text-rose-300 font-bold border border-rose-500/50'
-                  : c === ' '
-                  ? 'bg-yellow-500/20 text-yellow-300'
-                  : 'bg-slate-800 text-slate-300'
-              }`}
-            >
-              [{c.charCodeAt(0)} '{c === '\n' ? '\\n' : c === '\r' ? '\\r' : c}']
-            </span>
-          ))}
+        {/* Enhanced ASCII Byte Stream Debugger */}
+        <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1.5">
+          <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-1.5">
+            <div className="flex items-center gap-1.5">
+              <Bug className="w-4 h-4 text-cyan-400" />
+              <span className="font-bold text-white">ASCII Byte Stream Debugger</span>
+              <span>({raw.length} bytes)</span>
+            </div>
+            {suffixLen > 0 && (
+              <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded font-bold">
+                Control Enter Sequence Detected ({hasDoubleJSuffix ? 'jj' : 'j'})
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 items-center pt-1">
+            {Array.from(raw).map((c, idx) => {
+              const isControlSuffix = idx >= bodyLen && suffixLen > 0;
+              const code = c.charCodeAt(0);
+              return (
+                <span
+                  key={idx}
+                  className={`px-1.5 py-0.5 rounded border ${
+                    isControlSuffix
+                      ? 'bg-rose-500/30 text-rose-200 border-rose-500/70 font-black animate-pulse'
+                      : c === '\n' || c === '\r'
+                      ? 'bg-rose-500/30 text-rose-300 font-bold border-rose-500/50'
+                      : c === ' '
+                      ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40'
+                      : 'bg-slate-950 text-slate-300 border-slate-800'
+                  }`}
+                >
+                  [{code} '{c === '\n' ? '\\n' : c === '\r' ? '\\r' : c}']
+                  {isControlSuffix && <span className="text-[9px] text-rose-300 ml-1">➔ Control Enter</span>}
+                </span>
+              );
+            })}
+          </div>
         </div>
       </div>
     );
@@ -353,7 +372,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </div>
         </div>
 
-        {/* Panel 2: QR Scanner Textarea Input (Preserves Raw Line Breaks \n & \r) */}
+        {/* Panel 2: QR Scanner Textarea Input (Preserves Raw Line Breaks \n & Scanner 'j' Suffixes) */}
         <div className="glass-panel p-6 rounded-2xl space-y-4 border border-slate-800 relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -361,12 +380,12 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
               <h2 className="font-bold text-slate-100 text-lg">2. Hardware QR Scanner Input</h2>
             </div>
             <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/20">
-              Raw Line-Break Preserving
+              Hardware Scanner Enabled
             </span>
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs font-medium text-slate-400">Scanned QR Code String (preserves \n & \r)</label>
+            <label className="text-xs font-medium text-slate-400">Scanned QR Code String (preserves \n & 'j' / 'jj' control codes)</label>
             <div className="relative">
               <textarea
                 ref={qrTextareaRef}
@@ -408,79 +427,99 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           <span className="text-xs text-slate-400">Click preset to test specific condition</span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
           <button
             onClick={() => applyPreset('GH69-46615A')}
-            className="p-3 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 rounded-xl text-left transition-all group"
+            className="p-2.5 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 rounded-xl text-left transition-all group"
           >
             <span className="text-xs font-bold text-emerald-400 block group-hover:text-emerald-300">
               1. Normal OK
             </span>
-            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A"</span>
+            <span className="text-[10px] font-mono text-slate-400 block truncate">"GH69-46615A"</span>
           </button>
 
           <button
             onClick={() => applyPreset("GH69-46615A\n")}
-            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
+            className="p-2.5 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
-              2. Enter 1x
+              2. Enter 1x (\n)
             </span>
-            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A\n"</span>
+            <span className="text-[10px] font-mono text-slate-400 block truncate">"GH69-46615A\n"</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset("GH69-46615Aj")}
+            className="p-2.5 bg-rose-950/60 hover:bg-rose-900/80 border border-rose-400/60 rounded-xl text-left transition-all group ring-2 ring-rose-500/40"
+          >
+            <span className="text-xs font-bold text-rose-300 block group-hover:text-rose-200">
+              3. Enter 1x ('j')
+            </span>
+            <span className="text-[10px] font-mono text-slate-300 block truncate">"GH69-46615Aj"</span>
           </button>
 
           <button
             onClick={() => applyPreset("GH69-46615A\n\n")}
-            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
+            className="p-2.5 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
-              3. Enter 2x
+              4. Enter 2x (\n\n)
             </span>
-            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A\n\n"</span>
+            <span className="text-[10px] font-mono text-slate-400 block truncate">"GH69-46615A\n\n"</span>
+          </button>
+
+          <button
+            onClick={() => applyPreset("GH69-46615Ajj")}
+            className="p-2.5 bg-rose-950/60 hover:bg-rose-900/80 border border-rose-400/60 rounded-xl text-left transition-all group ring-2 ring-rose-500/40"
+          >
+            <span className="text-xs font-bold text-rose-300 block group-hover:text-rose-200">
+              5. Enter 2x ('jj')
+            </span>
+            <span className="text-[10px] font-mono text-slate-300 block truncate">"GH69-46615Ajj"</span>
           </button>
 
           <button
             onClick={() => applyPreset(" GH69-46615A")}
-            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
+            className="p-2.5 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
-              4. Leading Space
+              6. Lead Space
             </span>
-            <span className="text-[11px] font-mono text-slate-400 block truncate">" GH69-46615A"</span>
+            <span className="text-[10px] font-mono text-slate-400 block truncate">" GH69-46615A"</span>
           </button>
 
           <button
             onClick={() => applyPreset("GH69-46615A ")}
-            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
+            className="p-2.5 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
-              5. Trailing Space
+              7. Trail Space
             </span>
-            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A "</span>
+            <span className="text-[10px] font-mono text-slate-400 block truncate">"GH69-46615A "</span>
           </button>
 
           <button
             onClick={() => applyPreset("GH69-46615A#")}
-            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
+            className="p-2.5 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
-              6. Other Symbols
+              8. Symbol #
             </span>
-            <span className="text-[11px] font-mono text-slate-400 block truncate">"GH69-46615A#"</span>
+            <span className="text-[10px] font-mono text-slate-400 block truncate">"GH69-46615A#"</span>
           </button>
         </div>
       </div>
 
-      {/* Visual Character Anomaly Renderer & ASCII Debugger Stream */}
+      {/* Visual Character Anomaly Renderer & ASCII Byte Stream Debugger */}
       {lastMatchResult && (
         <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-200 text-sm uppercase tracking-wider flex items-center gap-2">
               <Terminal className="w-4 h-4 text-cyan-400" />
-              Visual Character & ASCII Byte Debugger Stream
+              Visual Character Stream & ASCII Byte Stream Debugger
             </h3>
             <span className="text-xs font-mono text-cyan-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-              Raw Bytes Inspection
+              Hardware Scanner Inspection
             </span>
           </div>
 

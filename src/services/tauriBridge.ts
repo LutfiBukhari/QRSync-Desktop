@@ -8,7 +8,7 @@ const isTauriAvailable = (): boolean => {
 
 /**
  * Frontend Fallback validator replicating exact Rust backend rules
- * Inspects exact ASCII 10 (\n) and ASCII 13 (\r) without silent trimming
+ * Inspects raw bytes and hardware scanner 'j' / 'jj' Line Feed control sequences
  */
 export const clientValidateQR = (rawInput: string): ValidationResult => {
   const issues: string[] = [];
@@ -22,15 +22,20 @@ export const clientValidateQR = (rawInput: string): ValidationResult => {
     if (code === 13) r_count++;
   }
 
-  const total_line_breaks = n_count > 0 ? n_count : r_count;
+  const total_raw_breaks = n_count > 0 ? n_count : r_count;
+
+  // Hardware scanner Line Feed control translation ('j' / 'jj' / 'J' / 'JJ')
+  const has_double_j_suffix = rawInput.endsWith('jj') || rawInput.endsWith('JJ');
+  const has_single_j_suffix = !has_double_j_suffix && (rawInput.endsWith('j') || rawInput.endsWith('J'));
 
   const has_double_enter =
     rawInput.includes('\n\n') ||
     rawInput.includes('\r\n\r\n') ||
     rawInput.includes('\r\r') ||
-    total_line_breaks >= 2;
+    total_raw_breaks >= 2 ||
+    has_double_j_suffix;
 
-  const enter_count = has_double_enter ? 2 : total_line_breaks === 1 ? 1 : 0;
+  const enter_count = has_double_enter ? 2 : (total_raw_breaks === 1 || has_single_j_suffix) ? 1 : 0;
 
   if (enter_count >= 2) {
     issues.push('NG: Detected 2x Enter');
@@ -38,20 +43,25 @@ export const clientValidateQR = (rawInput: string): ValidationResult => {
     issues.push('NG: Detected 1x Enter');
   }
 
-  const withoutNewlines = rawInput.replace(/[\r\n]+/g, '');
-  const has_leading_space = /^[ \t]/.test(withoutNewlines);
+  let contentForChars = rawInput.replace(/[\r\n]+/g, '');
+  if (has_double_j_suffix) {
+    contentForChars = contentForChars.slice(0, -2);
+  } else if (has_single_j_suffix) {
+    contentForChars = contentForChars.slice(0, -1);
+  }
+
+  const has_leading_space = /^[ \t]/.test(contentForChars);
   if (has_leading_space) {
     issues.push('NG: Leading Space Detected');
   }
 
-  const has_trailing_space = /[ \t]$/.test(withoutNewlines);
+  const has_trailing_space = /[ \t]$/.test(contentForChars);
   if (has_trailing_space) {
     issues.push('NG: Trailing Space Detected');
   }
 
-  for (let i = 0; i < rawInput.length; i++) {
-    const ch = rawInput[i];
-    if (ch === '\r' || ch === '\n') continue;
+  for (let i = 0; i < contentForChars.length; i++) {
+    const ch = contentForChars[i];
     if (!/[a-zA-Z0-9-]/.test(ch)) {
       invalidCharsSet.add(ch);
     }
@@ -88,7 +98,7 @@ export const clientCompareValues = (manual: string, scanned: string): MatchResul
   const manualValidation = clientValidateQR(manual);
   const scannedValidation = clientValidateQR(scanned);
 
-  // Formatting errors take absolute precedence
+  // Formatting and scanner control errors MUST take absolute precedence
   if (!scannedValidation.is_ok) {
     return {
       is_ok: false,

@@ -47,63 +47,65 @@ pub struct LogEntry {
     pub error_details: String,
 }
 
-/// Core QR & Text validation logic inspecting exact ASCII bytes without silent trimming
+/// Core QR & Text validation logic inspecting raw bytes and hardware scanner control sequences ('j' / 'jj')
 pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
     let mut issues = Vec::new();
     let mut invalid_chars = Vec::new();
 
-    // Inspect ASCII 10 (\n) and ASCII 13 (\r)
+    // 1. Inspect raw newlines (\n, \r\n, \r)
     let n_count = raw_input.as_bytes().iter().filter(|&&b| b == 10).count();
     let r_count = raw_input.as_bytes().iter().filter(|&&b| b == 13).count();
-    
-    // Total line break occurrences
-    let total_line_breaks = if n_count > 0 {
-        n_count
-    } else {
-        r_count
-    };
+    let total_raw_breaks = if n_count > 0 { n_count } else { r_count };
+
+    // 2. Inspect hardware scanner Line Feed control translation ('j' / 'jj' / 'J' / 'JJ')
+    // Many hardware scanners translate Ctrl+J (\n) into literal character 'j' (ASCII 106)
+    let has_double_j_suffix = raw_input.ends_with("jj") || raw_input.ends_with("JJ");
+    let has_single_j_suffix = !has_double_j_suffix && (raw_input.ends_with('j') || raw_input.ends_with('J'));
 
     let has_double_enter = raw_input.contains("\n\n") 
         || raw_input.contains("\r\n\r\n") 
         || raw_input.contains("\n\r\n")
         || raw_input.contains("\r\r")
-        || total_line_breaks >= 2;
+        || total_raw_breaks >= 2
+        || has_double_j_suffix;
 
     let enter_count = if has_double_enter {
         2
-    } else if total_line_breaks == 1 {
+    } else if total_raw_breaks == 1 || has_single_j_suffix {
         1
     } else {
         0
     };
 
-    // Formatting check 1: Enters take priority
+    // Formatting check 1: Enters / Control Enter sequences take absolute priority
     if enter_count >= 2 {
         issues.push("NG: Detected 2x Enter".to_string());
     } else if enter_count == 1 {
         issues.push("NG: Detected 1x Enter".to_string());
     }
 
-    // Strip line breaks only for inspecting leading/trailing spaces
-    let without_newlines = raw_input.trim_matches(|c| c == '\r' || c == '\n');
+    // Strip newlines and hardware scanner 'j'/'jj' control suffixes for character and space analysis
+    let mut content_for_chars = raw_input.trim_matches(|c| c == '\r' || c == '\n');
+    if has_double_j_suffix {
+        content_for_chars = &content_for_chars[..content_for_chars.len() - 2];
+    } else if has_single_j_suffix {
+        content_for_chars = &content_for_chars[..content_for_chars.len() - 1];
+    }
 
     // Formatting check 2: Leading Space
-    let has_leading_space = without_newlines.starts_with(' ') || without_newlines.starts_with('\t');
+    let has_leading_space = content_for_chars.starts_with(' ') || content_for_chars.starts_with('\t');
     if has_leading_space {
         issues.push("NG: Leading Space Detected".to_string());
     }
 
     // Formatting check 3: Trailing Space
-    let has_trailing_space = without_newlines.ends_with(' ') || without_newlines.ends_with('\t');
+    let has_trailing_space = content_for_chars.ends_with(' ') || content_for_chars.ends_with('\t');
     if has_trailing_space {
         issues.push("NG: Trailing Space Detected".to_string());
     }
 
-    // Formatting check 4: Disallowed Characters (A-Z, a-z, 0-9, and '-')
-    for ch in raw_input.chars() {
-        if ch == '\r' || ch == '\n' {
-            continue; // line breaks handled above
-        }
+    // Formatting check 4: Disallowed Characters (A-Z, a-z, 0-9, and '-') on the content body
+    for ch in content_for_chars.chars() {
         if !ch.is_ascii_alphanumeric() && ch != '-' {
             if !invalid_chars.contains(&ch) {
                 invalid_chars.push(ch);
@@ -147,7 +149,7 @@ pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
 }
 
 /// Compare Manual User Input vs QR Scan Input
-/// Formatting errors take absolute precedence over value matching.
+/// Formatting and Scanner Control anomalies MUST take absolute precedence over generic Value Mismatch.
 pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
     let manual_val = manual.to_string();
     let scanned_val = scanned.to_string();
@@ -155,7 +157,7 @@ pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
     let manual_validation = validate_qr_content_impl(manual);
     let scanned_validation = validate_qr_content_impl(scanned);
 
-    // FORMATTING ERRORS MUST TAKE ABSOLUTE PRECEDENCE
+    // FORMATTING AND SCANNER CONTROL ERRORS TAKE ABSOLUTE PRECEDENCE
     if !scanned_validation.is_ok {
         return MatchResult {
             is_ok: false,
@@ -353,6 +355,14 @@ mod tests {
     }
 
     #[test]
+    fn test_enter_1x_scanner_control_j() {
+        let res = validate_qr_content_impl("GH69-46615Aj");
+        assert!(!res.is_ok);
+        assert_eq!(res.enter_count, 1);
+        assert!(res.detailed_reason.contains("NG: Detected 1x Enter"));
+    }
+
+    #[test]
     fn test_enter_2x_lf() {
         let res = validate_qr_content_impl("GH69-46615A\n\n");
         assert!(!res.is_ok);
@@ -366,6 +376,30 @@ mod tests {
         assert!(!res.is_ok);
         assert_eq!(res.enter_count, 2);
         assert!(res.detailed_reason.contains("NG: Detected 2x Enter"));
+    }
+
+    #[test]
+    fn test_enter_2x_scanner_control_jj() {
+        let res = validate_qr_content_impl("GH69-46615Ajj");
+        assert!(!res.is_ok);
+        assert_eq!(res.enter_count, 2);
+        assert!(res.detailed_reason.contains("NG: Detected 2x Enter"));
+    }
+
+    #[test]
+    fn test_compare_values_scanner_control_j_precedence() {
+        let match_res = compare_values_impl("GH69-46615A", "GH69-46615Aj");
+        assert!(!match_res.is_ok);
+        assert_eq!(match_res.status_code, "NG");
+        assert_eq!(match_res.detailed_reason, "NG: Detected 1x Enter");
+    }
+
+    #[test]
+    fn test_compare_values_scanner_control_jj_precedence() {
+        let match_res = compare_values_impl("GH69-46615A", "GH69-46615Ajj");
+        assert!(!match_res.is_ok);
+        assert_eq!(match_res.status_code, "NG");
+        assert_eq!(match_res.detailed_reason, "NG: Detected 2x Enter");
     }
 
     #[test]
@@ -404,13 +438,5 @@ mod tests {
         let match_res = compare_values_impl("GH69-46615A", "GH69-99999A");
         assert!(!match_res.is_ok);
         assert_eq!(match_res.detailed_reason, "NG: Value Mismatch");
-    }
-
-    #[test]
-    fn test_compare_values_enter_1x_ng() {
-        let match_res = compare_values_impl("GH69-46615A", "GH69-46615A\r\n");
-        assert!(!match_res.is_ok);
-        assert_eq!(match_res.status_code, "NG");
-        assert!(match_res.detailed_reason.contains("NG: Detected 1x Enter"));
     }
 }
