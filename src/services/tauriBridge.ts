@@ -15,9 +15,15 @@ export const clientValidateQR = (rawInput: string): ValidationResult => {
 
   const n_count = (rawInput.match(/\n/g) || []).length;
   const r_count = (rawInput.match(/\r/g) || []).length;
-  const has_double_enter = rawInput.includes('\n\n') || rawInput.includes('\r\n\r\n') || n_count >= 2;
+  const total_line_breaks = n_count > 0 ? n_count : r_count;
 
-  const enter_count = has_double_enter ? 2 : (n_count === 1 || (r_count >= 1 && n_count === 0)) ? 1 : 0;
+  const has_double_enter =
+    rawInput.includes('\n\n') ||
+    rawInput.includes('\r\n\r\n') ||
+    rawInput.includes('\r\r') ||
+    total_line_breaks >= 2;
+
+  const enter_count = has_double_enter ? 2 : total_line_breaks === 1 ? 1 : 0;
 
   if (enter_count >= 2) {
     issues.push('NG: Detected 2x Enter');

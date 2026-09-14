@@ -20,12 +20,12 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
   const [lastMatchResult, setLastMatchResult] = useState<MatchResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  const qrInputRef = useRef<HTMLInputElement>(null);
+  const qrTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-focus QR scanner input
+  // Auto-focus QR scanner textarea
   useEffect(() => {
-    if (autoFocus && qrInputRef.current) {
-      qrInputRef.current.focus();
+    if (autoFocus && qrTextareaRef.current) {
+      qrTextareaRef.current.focus();
     }
   }, [autoFocus, lastMatchResult]);
 
@@ -36,10 +36,10 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     const result = await apiCompareValues(manual, scanned);
     setLastMatchResult(result);
 
-    // Play feedback tone
+    // Play audio tone feedback
     playSoundEffect(result.is_ok ? 'OK' : 'NG', soundEnabled);
 
-    // Record log
+    // Record persistent log entry
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     await apiWriteLogEntry({
       id: Math.random().toString(36).substring(2, 9),
@@ -59,21 +59,30 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
 
     setIsProcessing(false);
 
-    // Re-focus scanner input after short delay for rapid scanning
+    // Re-focus scanner field for continuous rapid scanning
     if (autoFocus) {
       setTimeout(() => {
-        if (qrInputRef.current) {
-          qrInputRef.current.focus();
-          qrInputRef.current.select();
+        if (qrTextareaRef.current) {
+          qrTextareaRef.current.focus();
+          qrTextareaRef.current.select();
         }
       }, 50);
     }
   };
 
-  const handleQrKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
+  const handleQrKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // If Enter key is pressed by hardware scanner or user (without Shift)
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleVerify(manualInput, scannedInput);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = e.clipboardData.getData('text');
+    if (pastedText) {
+      // Retain exact unsanitized pasted text with all newlines and spaces
+      setScannedInput(pastedText);
     }
   };
 
@@ -82,10 +91,10 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
     handleVerify(manualInput, scannedPreset);
   };
 
-  // Helper to render visual character diagnostics
+  // Visual character anomaly renderer
   const renderVisualBreakdown = (val: ValidationResult) => {
     const raw = val.raw_input;
-    if (!raw) return <span className="text-slate-500 italic">No input scanned</span>;
+    if (!raw) return <span className="text-slate-500 italic font-sans text-xs">No input scanned</span>;
 
     const elements: React.ReactNode[] = [];
     let keyIdx = 0;
@@ -94,57 +103,56 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
       const ch = raw[i];
       if (ch === ' ') {
         elements.push(
-          <span key={keyIdx++} className="char-space-pill" title="Leading or Trailing Space">
-            ␠
+          <span key={keyIdx++} className="char-space-pill px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title="Space character">
+            ␠ space
           </span>
         );
       } else if (ch === '\t') {
         elements.push(
-          <span key={keyIdx++} className="char-space-pill" title="Tab Space">
-            \t
+          <span key={keyIdx++} className="char-space-pill px-1.5 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/60 text-yellow-300 text-xs font-mono font-bold" title="Tab character">
+            \t tab
           </span>
         );
       } else if (ch === '\n') {
         elements.push(
-          <span key={keyIdx++} className="char-newline-pill" title="Line Break Enter">
-            ↵ Enter
+          <span key={keyIdx++} className="char-newline-pill px-2 py-0.5 rounded bg-rose-500/25 border border-rose-500/70 text-rose-300 text-xs font-mono font-bold animate-pulse" title="Line Break Enter">
+            ↵ Enter (\n)
           </span>
         );
       } else if (ch === '\r') {
-        // skip \r if followed by \n
-        if (raw[i + 1] === '\n') continue;
+        if (raw[i + 1] === '\n') continue; // render \r\n together as single Enter pill
         elements.push(
-          <span key={keyIdx++} className="char-newline-pill" title="Carriage Return">
-            \r
+          <span key={keyIdx++} className="char-newline-pill px-2 py-0.5 rounded bg-rose-500/25 border border-rose-500/70 text-rose-300 text-xs font-mono font-bold animate-pulse" title="Carriage Return">
+            \r Enter
           </span>
         );
       } else if (!/[a-zA-Z0-9-]/.test(ch)) {
         elements.push(
-          <span key={keyIdx++} className="char-invalid-pill" title={`Disallowed character: '${ch}'`}>
+          <span key={keyIdx++} className="char-invalid-pill px-2 py-0.5 rounded bg-rose-600/35 border border-rose-400 text-rose-100 text-xs font-mono font-bold animate-pulse" title={`Disallowed Symbol: '${ch}'`}>
             {ch}
           </span>
         );
       } else {
         elements.push(
-          <span key={keyIdx++} className="text-emerald-300 font-bold">
+          <span key={keyIdx++} className="text-emerald-300 font-mono font-bold text-base">
             {ch}
           </span>
         );
       }
     }
 
-    return <div className="flex flex-wrap items-center gap-1 font-mono text-base">{elements}</div>;
+    return <div className="flex flex-wrap items-center gap-1.5 p-3 bg-slate-950 rounded-xl border border-slate-800">{elements}</div>;
   };
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Top Banner Status Display */}
+      {/* Prominent High-Contrast Status Banner */}
       {lastMatchResult ? (
         <div
           className={`p-6 rounded-2xl border transition-all duration-300 shadow-2xl ${
             lastMatchResult.is_ok
-              ? 'bg-gradient-to-r from-emerald-950/80 via-slate-900 to-teal-950/80 border-emerald-500/50 shadow-emerald-500/10'
-              : 'bg-gradient-to-r from-rose-950/80 via-slate-900 to-red-950/80 border-rose-500/50 shadow-rose-500/10 animate-shake'
+              ? 'bg-gradient-to-r from-emerald-950/90 via-slate-900 to-teal-950/90 border-emerald-500/60 shadow-emerald-500/20'
+              : 'bg-gradient-to-r from-rose-950/90 via-slate-900 to-red-950/90 border-rose-500/80 shadow-rose-500/30 ring-2 ring-rose-500/40'
           }`}
         >
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
@@ -152,64 +160,69 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
               <div
                 className={`p-4 rounded-2xl ${
                   lastMatchResult.is_ok
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                 }`}
               >
                 {lastMatchResult.is_ok ? (
                   <CheckCircle2 className="w-12 h-12 stroke-[2.5]" />
                 ) : (
-                  <XCircle className="w-12 h-12 stroke-[2.5]" />
+                  <XCircle className="w-12 h-12 stroke-[2.5] text-rose-400 animate-pulse" />
                 )}
               </div>
 
               <div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span
-                    className={`text-3xl font-black tracking-tight ${
-                      lastMatchResult.is_ok ? 'text-emerald-400' : 'text-rose-400'
+                    className={`text-4xl font-black tracking-tight ${
+                      lastMatchResult.is_ok ? 'text-emerald-400' : 'text-rose-400 drop-shadow-[0_0_12px_rgba(239,68,68,0.5)]'
                     }`}
                   >
                     {lastMatchResult.is_ok ? 'OK / PASS' : 'NG / FAIL'}
                   </span>
+
                   <span
-                    className={`px-3 py-1 text-xs font-mono font-bold rounded-lg uppercase border ${
+                    className={`px-3.5 py-1 text-sm font-mono font-extrabold rounded-xl uppercase border shadow-lg ${
                       lastMatchResult.is_ok
-                        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                        : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
                     }`}
                   >
                     {lastMatchResult.detailed_reason}
                   </span>
                 </div>
-                <p className="text-sm text-slate-300 mt-1">
-                  Manual Value: <span className="font-mono text-white font-semibold">{lastMatchResult.manual_val}</span> | Scanned QR: <span className="font-mono text-white font-semibold">{lastMatchResult.scanned_val || '(Empty)'}</span>
+
+                <p className="text-sm text-slate-300 mt-2 font-mono">
+                  Target: <span className="text-emerald-300 font-bold">{lastMatchResult.manual_val}</span> | Scanned QR: <span className="text-cyan-300 font-bold">{lastMatchResult.scanned_val ? JSON.stringify(lastMatchResult.scanned_val) : '(Empty)'}</span>
                 </p>
               </div>
             </div>
 
-            {/* Quick Diagnostic Pills */}
+            {/* Diagnostic Metrics Pills */}
             <div className="flex flex-col items-end gap-2 text-xs font-mono">
               <div className="flex items-center gap-2">
                 <span className="text-slate-400">FORMAT:</span>
                 <span
                   className={
-                    lastMatchResult.scanned_validation.is_ok ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'
+                    lastMatchResult.scanned_validation.is_ok
+                      ? 'text-emerald-400 font-bold px-2 py-0.5 bg-emerald-500/10 rounded border border-emerald-500/20'
+                      : 'text-rose-400 font-bold px-2 py-0.5 bg-rose-500/20 rounded border border-rose-500/40'
                   }
                 >
                   {lastMatchResult.scanned_validation.status_code}
                 </span>
               </div>
+
               <div className="flex items-center gap-2">
-                <span className="text-slate-400">VALUE MATCH:</span>
+                <span className="text-slate-400">OVERALL MATCH:</span>
                 <span
                   className={
-                    lastMatchResult.manual_val.trim() === lastMatchResult.scanned_val.trim()
-                      ? 'text-emerald-400 font-bold'
-                      : 'text-rose-400 font-bold'
+                    lastMatchResult.is_ok
+                      ? 'text-emerald-400 font-bold px-2 py-0.5 bg-emerald-500/10 rounded border border-emerald-500/20'
+                      : 'text-rose-400 font-bold px-2 py-0.5 bg-rose-500/20 rounded border border-rose-500/40'
                   }
                 >
-                  {lastMatchResult.manual_val.trim() === lastMatchResult.scanned_val.trim() ? 'PASS' : 'MISMATCH'}
+                  {lastMatchResult.is_ok ? 'PASS' : 'NG (FAILED)'}
                 </span>
               </div>
             </div>
@@ -224,7 +237,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
             <div>
               <h3 className="font-bold text-slate-200">Ready for Hardware QR Scanning</h3>
               <p className="text-xs text-slate-400">
-                Type or paste target Manual Value, then scan hardware QR barcode into field below.
+                Type or paste target Manual Value, then scan hardware QR barcode into scanner field below.
               </p>
             </div>
           </div>
@@ -257,7 +270,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
             />
           </div>
 
-          {/* Target Preset Chips */}
+          {/* Quick Target Presets */}
           <div>
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
               Quick Target Presets
@@ -276,7 +289,7 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </div>
         </div>
 
-        {/* Panel 2: QR Scanner Input */}
+        {/* Panel 2: QR Scanner Textarea Input (Preserves Raw Line Breaks \n & \r) */}
         <div className="glass-panel p-6 rounded-2xl space-y-4 border border-slate-800 relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -284,23 +297,23 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
               <h2 className="font-bold text-slate-100 text-lg">2. Hardware QR Scanner Input</h2>
             </div>
             <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/20">
-              Auto-Focused
+              Raw Line-Break Preserving
             </span>
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs font-medium text-slate-400">Scanned QR Code Raw String</label>
+            <label className="text-xs font-medium text-slate-400">Scanned QR Code String (preserves \n & \r)</label>
             <div className="relative">
-              <input
-                ref={qrInputRef}
-                type="text"
+              <textarea
+                ref={qrTextareaRef}
+                rows={2}
                 value={scannedInput}
                 onChange={(e) => setScannedInput(e.target.value)}
                 onKeyDown={handleQrKeyDown}
-                placeholder="Scan QR barcode here (Press Enter)..."
-                className="w-full px-4 py-3 pl-10 bg-slate-900/90 border border-slate-700/80 rounded-xl text-white font-mono text-base focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all shadow-inner"
+                onPaste={handlePaste}
+                placeholder="Scan hardware QR barcode here (Press Enter to verify)..."
+                className="w-full px-4 py-3 bg-slate-900/90 border border-slate-700/80 rounded-xl text-white font-mono text-base focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all shadow-inner resize-none"
               />
-              <Scan className="w-5 h-5 text-slate-500 absolute left-3 top-3.5" />
             </div>
           </div>
 
@@ -314,21 +327,21 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
             ) : (
               <>
                 <ShieldCheck className="w-5 h-5" />
-                Verify Value Match
+                Verify Value & Formatting
               </>
             )}
           </button>
         </div>
       </div>
 
-      {/* Simulation Test Scenarios (Referencing User Requirement Scenarios) */}
+      {/* Simulation Scenarios Suite */}
       <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-yellow-400" />
-            <h3 className="font-bold text-slate-200">Simulation Scenarios & Test Suite</h3>
+            <h3 className="font-bold text-slate-200">Simulation Scenarios & Diagnostic Test Suite</h3>
           </div>
-          <span className="text-xs text-slate-400">Click preset to test specific validation condition</span>
+          <span className="text-xs text-slate-400">Click preset to test specific condition</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -343,8 +356,8 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </button>
 
           <button
-            onClick={() => applyPreset('GH69-46615A\n')}
-            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+            onClick={() => applyPreset("GH69-46615A\n")}
+            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
               2. Enter 1x
@@ -353,8 +366,8 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </button>
 
           <button
-            onClick={() => applyPreset('GH69-46615A\n\n')}
-            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+            onClick={() => applyPreset("GH69-46615A\n\n")}
+            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
               3. Enter 2x
@@ -363,8 +376,8 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </button>
 
           <button
-            onClick={() => applyPreset(' GH69-46615A')}
-            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+            onClick={() => applyPreset(" GH69-46615A")}
+            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
               4. Leading Space
@@ -373,8 +386,8 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </button>
 
           <button
-            onClick={() => applyPreset('GH69-46615A ')}
-            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+            onClick={() => applyPreset("GH69-46615A ")}
+            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
               5. Trailing Space
@@ -383,8 +396,8 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
           </button>
 
           <button
-            onClick={() => applyPreset('GH69-46615A#')}
-            className="p-3 bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/30 rounded-xl text-left transition-all group"
+            onClick={() => applyPreset("GH69-46615A#")}
+            className="p-3 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/50 rounded-xl text-left transition-all group ring-1 ring-rose-500/30"
           >
             <span className="text-xs font-bold text-rose-400 block group-hover:text-rose-300">
               6. Other Symbols
@@ -394,16 +407,18 @@ export const SingleMatchView: React.FC<SingleMatchViewProps> = ({
         </div>
       </div>
 
-      {/* Visual Diagnostic Character Renderer Panel */}
+      {/* Visual Character Anomaly Renderer */}
       {lastMatchResult && (
         <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
           <h3 className="font-bold text-slate-200 text-sm uppercase tracking-wider flex items-center gap-2">
             <CornerDownLeft className="w-4 h-4 text-cyan-400" />
-            Visual Anomaly Character Renderer
+            Visual Character Stream Anomaly Renderer
           </h3>
 
-          <div className="p-4 bg-slate-950/90 rounded-xl border border-slate-800">
-            <span className="text-xs text-slate-500 block mb-2">Scanned String Character Stream:</span>
+          <div className="p-2">
+            <span className="text-xs text-slate-400 block mb-2 font-mono">
+              Scanned String Inspection:
+            </span>
             {renderVisualBreakdown(lastMatchResult.scanned_validation)}
           </div>
         </div>

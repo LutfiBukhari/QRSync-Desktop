@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ViewTab, SessionStats } from './types';
 import { Navbar } from './components/Navbar';
 import { SingleMatchView } from './components/SingleMatchView';
@@ -17,6 +17,38 @@ export const App: React.FC = () => {
 
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [autoFocus, setAutoFocus] = useState<boolean>(true);
+
+  // Suppress browser default popups (e.g. Ctrl+J Downloads popup, Ctrl+S Save popup, Drag-and-drop file shelf)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Intercept Ctrl+J / Cmd+J (Downloads shelf), Ctrl+S (Save), Ctrl+P (Print)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'j' || e.key === 'J' || e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      // Prevent browser default file open/download action on drop unless inside bulk dropzone
+      const target = e.target as HTMLElement;
+      if (!target.closest('.bulk-dropzone')) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, []);
 
   const handleScanResult = (result: 'OK' | 'NG') => {
     setStats((prev) => ({
@@ -70,9 +102,9 @@ export const App: React.FC = () => {
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            <span className="text-slate-300 font-semibold">MatchValue Engine Core Ready</span>
+            <span className="text-slate-300 font-semibold">MatchValue Engine Core Active</span>
             <span className="text-slate-600">|</span>
-            <span className="text-slate-500">Tauri v2 + Rust Backend</span>
+            <span className="text-slate-500">Tauri v2 + Rust Anomaly Engine</span>
           </div>
 
           <div className="flex items-center gap-4 text-slate-500">

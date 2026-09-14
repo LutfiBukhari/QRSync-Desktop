@@ -52,17 +52,26 @@ pub fn validate_qr_content_impl(raw_input: &str) -> ValidationResult {
     let mut issues = Vec::new();
     let mut invalid_chars = Vec::new();
 
-    // Check line breaks (\n, \r\n)
+    // Count line breaks (\n, \r\n, \r)
     let n_count = raw_input.matches('\n').count();
     let r_count = raw_input.matches('\r').count();
+    
+    // Total line break occurrences
+    let total_line_breaks = if n_count > 0 {
+        n_count
+    } else {
+        r_count
+    };
+
     let has_double_enter = raw_input.contains("\n\n") 
         || raw_input.contains("\r\n\r\n") 
         || raw_input.contains("\n\r\n")
-        || n_count >= 2;
+        || raw_input.contains("\r\r")
+        || total_line_breaks >= 2;
 
     let enter_count = if has_double_enter {
         2
-    } else if n_count == 1 || (r_count >= 1 && n_count == 0) {
+    } else if total_line_breaks == 1 {
         1
     } else {
         0
@@ -144,7 +153,7 @@ pub fn compare_values_impl(manual: &str, scanned: &str) -> MatchResult {
     let manual_validation = validate_qr_content_impl(manual);
     let scanned_validation = validate_qr_content_impl(scanned);
 
-    // If scanned validation fails formatting
+    // If scanned validation fails formatting (Enter 1x, Enter 2x, Spaces, Disallowed Chars)
     if !scanned_validation.is_ok {
         return MatchResult {
             is_ok: false,
@@ -326,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_1x() {
+    fn test_enter_1x_lf() {
         let res = validate_qr_content_impl("GH69-46615A\n");
         assert!(!res.is_ok);
         assert_eq!(res.enter_count, 1);
@@ -334,8 +343,24 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_2x() {
+    fn test_enter_1x_crlf() {
+        let res = validate_qr_content_impl("GH69-46615A\r\n");
+        assert!(!res.is_ok);
+        assert_eq!(res.enter_count, 1);
+        assert!(res.detailed_reason.contains("NG: Detected 1x Enter"));
+    }
+
+    #[test]
+    fn test_enter_2x_lf() {
         let res = validate_qr_content_impl("GH69-46615A\n\n");
+        assert!(!res.is_ok);
+        assert_eq!(res.enter_count, 2);
+        assert!(res.detailed_reason.contains("NG: Detected 2x Enter"));
+    }
+
+    #[test]
+    fn test_enter_2x_crlf() {
+        let res = validate_qr_content_impl("GH69-46615A\r\n\r\n");
         assert!(!res.is_ok);
         assert_eq!(res.enter_count, 2);
         assert!(res.detailed_reason.contains("NG: Detected 2x Enter"));
@@ -377,5 +402,13 @@ mod tests {
         let match_res = compare_values_impl("GH69-46615A", "GH69-99999A");
         assert!(!match_res.is_ok);
         assert_eq!(match_res.detailed_reason, "NG: Value Mismatch");
+    }
+
+    #[test]
+    fn test_compare_values_enter_1x_ng() {
+        let match_res = compare_values_impl("GH69-46615A", "GH69-46615A\r\n");
+        assert!(!match_res.is_ok);
+        assert_eq!(match_res.status_code, "NG");
+        assert!(match_res.detailed_reason.contains("NG: Detected 1x Enter"));
     }
 }
